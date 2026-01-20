@@ -14,6 +14,15 @@ struct NodeGenerator {
   // Pre condition: numChildren < number of next Calls
   virtual NodeType next() = 0;
 
+  // put next child into buffer
+  virtual void nextInPlace(NodeType &out) { out = next(); }
+
+  // is backtracking supported in this app
+  virtual bool canBacktrack() const { return false; }
+
+  // undo transformation
+  virtual void undo(NodeType &) {} 
+
   // Quickly skip to the nth child if possible Useful for recompute based
   // skeletons where we send a path in the tree rather than a particular node
   NodeType nth(unsigned n) {

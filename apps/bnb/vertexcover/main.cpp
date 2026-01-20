@@ -105,7 +105,8 @@ static bool check_is_cover(const BitGraph<NWORDS> &g, const VCNode &n) {
 }
 
 // Reduction rule: degree-0 in the undecided induced subgraph
-static bool apply_reductions(const BitGraph<NWORDS> &g, VCNode &n) {
+static bool apply_reductions(const BitGraph<NWORDS> &g, VCNode &n,
+                            std::vector<int> *unsetActive) {
   bool changed = false;
   int N = g.size();
 
@@ -119,7 +120,12 @@ static bool apply_reductions(const BitGraph<NWORDS> &g, VCNode &n) {
       g.intersect_with_row(u, nbrs); // neighbors among undecided vertices
 
       if (nbrs.empty()) {
-        n.active.unset(u);
+        if (n.active.test(u)) {
+          n.active.unset(u);
+          if (unsetActive) {
+            unsetActive->push_back(u);
+          }
+        }
         undec.unset(u);
         localChange = true;
       }
@@ -129,6 +135,10 @@ static bool apply_reductions(const BitGraph<NWORDS> &g, VCNode &n) {
   }
   n.isCover = check_is_cover(g, n);
   return changed;
+}
+
+static bool apply_reductions(const BitGraph<NWORDS> &g, VCNode &n) {
+  return apply_reductions(g, n, nullptr);
 }
 
 // Matching-based lower bound on remaining cover size
@@ -174,6 +184,20 @@ struct VCGenNode : YewPar::NodeGenerator<VCNode, BitGraph<NWORDS>> {
   VCNode parent;
   int next_child;
   int branchVertex;
+
+  struct UndoLog {
+    int prevSize = 0;
+    bool prevIsCover = false;
+    std::vector<int> setCoverBits;  // vertices that were 0->1 in inCover
+    std::vector<int> unsetActiveBits; // vertices that were 1->0 in active
+
+    void clear() {
+      setCoverBits.clear();
+      unsetActiveBits.clear();
+    }
+  };
+
+  UndoLog lastUndo;
 
   VCGenNode(const BitGraph<NWORDS> &g, const VCNode &node)
       : graph(g), parent(node), next_child(0), branchVertex(-1) {
@@ -255,6 +279,61 @@ struct VCGenNode : YewPar::NodeGenerator<VCNode, BitGraph<NWORDS>> {
     ++next_child;
     return out;
   }
+
+  bool canBacktrack() const override {
+    return true;
+  }
+
+  void nextInPlace(VCNode &out) override {
+    lastUndo.clear();
+    lastUndo.prevSize = out.size;
+    lastUndo.prevIsCover = out.isCover;
+
+    if (next_child == 0) {
+      if (!out.inCover.test(branchVertex)) {
+        out.inCover.set(branchVertex);
+        out.size += 1;
+        lastUndo.setCoverBits.push_back(branchVertex);
+      }
+      apply_reductions(graph, out, &lastUndo.unsetActiveBits);
+    } 
+    else {
+      int N = graph.size();
+
+      BitSet<NWORDS> nbrs = out.active;
+      graph.intersect_with_row(branchVertex, nbrs);
+
+      for (int u = 0; u < N; ++u) {
+        if (!nbrs.test(u)) continue;
+        if (!out.inCover.test(u)) {
+          out.inCover.set(u);
+          out.size += 1;
+          lastUndo.setCoverBits.push_back(u);
+        }
+      }
+
+      if (out.active.test(branchVertex)) {
+        out.active.unset(branchVertex);
+        lastUndo.unsetActiveBits.push_back(branchVertex);
+      }
+      apply_reductions(graph, out, &lastUndo.unsetActiveBits);
+    }
+    ++next_child;
+  }
+
+  void undo(VCNode &out) override {
+    // restore prev vals
+    out.size = lastUndo.prevSize;
+    out.isCover = lastUndo.prevIsCover;
+
+    // restore active bits
+    for (int v : lastUndo.unsetActiveBits) out.active.set(v);
+
+    // restore inCover bits
+    for (int v : lastUndo.setCoverBits) out.inCover.unset(v);
+
+    lastUndo.clear();
+  }
 };
 
 // HPX main
@@ -278,6 +357,8 @@ int hpx_main(hpx::program_options::variables_map &opts) {
   VCNode sol = root;
 
   YewPar::Skeletons::API::Params<int> P;
+  P.enableBacktracking = true;
+  P.revertToCopy = true;
   P.initialBound = graph.size();
 
   auto skeletonType = opts["skeleton"].as<std::string>();

@@ -89,6 +89,10 @@ struct Params {
   // Budget
   unsigned backtrackBudget = 100000;
 
+  // Backtracking optmisation
+  bool enableBacktracking = false;
+  bool revertToCopy = false;
+
   // Needed to push to registries on all nodes
   template <class Archive>
   void serialize(Archive & ar, const unsigned int version) {
@@ -98,6 +102,8 @@ struct Params {
     ar & spawnDepth;
     ar & stealAll;
     ar & backtrackBudget;
+    ar & enableBacktracking;
+    ar & revertToCopy;
   }
 
   std::string toString() const {

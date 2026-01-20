@@ -124,15 +124,34 @@ struct DepthBounded {
         }
     }
 
-    for (auto i = 0; i < newCands.numChildren; ++i) {
-      auto c = newCands.next();
+    const bool use_backtrack = params.enableBacktracking && newCands.canBacktrack();
 
-      auto pn = ProcessNode<Space, Node, Args...>::processNode(params, space, c, acc);
-      if (pn == ProcessNodeRet::Exit) { return; }
-      else if (pn == ProcessNodeRet::Prune) { continue; }
-      else if (pn == ProcessNodeRet::Break) { break; }
+    if (use_backtrack) {
+      Node work = n; // one copy per parent expansion (not per child)
+      for (unsigned i = 0; i < newCands.numChildren; ++i) {
+        newCands.nextInPlace(work); // parent -> child (in place)
 
-      expandNoSpawns(space, c, params, acc, childDepth + 1);
+        auto pn = ProcessNode<Space, Node, Args...>::processNode(params, space, work, acc);
+        if (pn == ProcessNodeRet::Exit) { newCands.undo(work); return; }
+        else if (pn == ProcessNodeRet::Prune) { newCands.undo(work); continue; }
+        else if (pn == ProcessNodeRet::Break) { newCands.undo(work); break; }
+
+        expandNoSpawns(space, work, params, acc, childDepth + 1);
+
+        newCands.undo(work); // child -> parent
+      }
+    } 
+    else {
+      for (unsigned i = 0; i < newCands.numChildren; ++i) {
+        Node c = newCands.next(); // existing copy-by-value behaviour
+
+        auto pn = ProcessNode<Space, Node, Args...>::processNode(params, space, c, acc);
+        if (pn == ProcessNodeRet::Exit) { return; }
+        else if (pn == ProcessNodeRet::Prune) { continue; }
+        else if (pn == ProcessNodeRet::Break) { break; }
+
+        expandNoSpawns(space, c, params, acc, childDepth + 1);
+      }
     }
   }
 
